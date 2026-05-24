@@ -9,6 +9,10 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
 
+// Secondary app for admin tasks (creating users without logging out)
+const secondaryApp = initializeApp(firebaseConfig, "SecondaryApp");
+export const secondaryAuth = getAuth(secondaryApp);
+
 const DB_NAME = 'ElZhurDB_v7';
 const DB_VERSION = 1;
 const STORE_ASSETS = 'assets';

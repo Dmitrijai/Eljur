@@ -14,6 +14,8 @@ import * as H from './utils/helpers';
 import { Modal } from './components/ui';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { auth } from './services/db';
 
 const defaultSchool: School = {
   id: 'school_1',
@@ -187,10 +189,26 @@ export default function App() {
   const [viewMode, setViewMode] = useState<'dashboard' | 'settings'>('dashboard');
   const [showEljurInfo, setShowEljurInfo] = useState(false);
   const [customFonts, setCustomFonts] = useState<{name: string, displayName: string}[]>([]);
+  const [firebaseUser, setFirebaseUser] = useState<any>(null);
+
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, (fbUser) => {
+       setFirebaseUser(fbUser);
+       if (!fbUser) {
+           setAppState(null);
+           setCurrentUser(null);
+           setLoading(false);
+       }
+    });
+    return () => unsubAuth();
+  }, []);
 
   // Initialize Data
   useEffect(() => {
     let unsubscribe: any;
+    if (!firebaseUser) return;
+    
+    setLoading(true);
     const init = async () => {
       // Load once first to handle default setup
       let loaded = await DB.loadStateOnce();
@@ -244,6 +262,16 @@ export default function App() {
         }
         
         setAppState(loaded);
+        
+        const email = firebaseUser.email;
+        if (email) {
+             const assumedLogin = email.split('@')[0].toLowerCase();
+             const u = loaded.users.find((u:any) => u.login.toLowerCase() === assumedLogin);
+             if (u) {
+                 setCurrentUser(u);
+             }
+        }
+
         if (isFirstSync) {
             isFirstSync = false;
             setLoading(false);
@@ -254,7 +282,7 @@ export default function App() {
     return () => {
        if (unsubscribe) unsubscribe();
     };
-  }, []);
+  }, [firebaseUser]);
 
   // Effect to toggle body class for theme
   useEffect(() => {
@@ -367,7 +395,8 @@ export default function App() {
     setCurrentUser(u);
     setViewMode('dashboard');
   };
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await signOut(auth);
     setCurrentUser(null);
     setViewMode('dashboard');
   };
@@ -378,9 +407,12 @@ export default function App() {
 
   // Render loading state
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-blue-600 font-medium dark:bg-slate-900">{H.t('loading', 'ru')}</div>;
-  if (!appState) return <div className="p-10 text-red-600">{H.t('error_state', 'ru')}</div>;
+  if (!appState && firebaseUser) {
+       // Still loading state or something went fundamentally wrong
+       return <div className="p-10 text-red-600">{H.t('error_state', 'ru')}</div>;
+  }
 
-  const showAnimations = appState.settings.showSeasonalAnimations !== false; // Default to true
+  const showAnimations = appState?.settings?.showSeasonalAnimations !== false; // Default to true
 
   const renderEljurInfo = () => {
     const info = appState?.settings?.eljurInfo || (lang === 'ru' ? '<p>Информация отсутствует.</p>' : '<p>No information available.</p>');
@@ -492,10 +524,10 @@ export default function App() {
   return (
     <div className={`min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors duration-300 font-sans`}>
       {/* Seasonal Background is rendered here, at the top level, to persist across Login/Dashboard views and avoid reset */}
-      <SeasonalBackground enabled={showAnimations} timeOffset={appState.settings.systemTimeOffset} />
+      <SeasonalBackground enabled={showAnimations} timeOffset={appState?.settings?.systemTimeOffset} />
 
-      {!currentUser ? (
-        <Login users={appState.users} onLogin={handleLogin} schoolName={appState.schools[0]?.name || 'ЭлЖур'} settings={appState.settings} />
+      {!firebaseUser || !currentUser || !appState ? (
+        <Login users={[]} onLogin={() => {}} schoolName={'ЭлЖур'} settings={{ language: 'ru' }} />
       ) : (
         <>
           {/* Header */}
