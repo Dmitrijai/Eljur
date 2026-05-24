@@ -1,26 +1,25 @@
 
 import React, { useState, useEffect } from 'react';
-import { Role } from '../types';
+import { User, Role } from '../types';
 import { Button, Input, Select, Card, Modal } from '../components/ui';
 import { Eye, EyeOff } from 'lucide-react';
 import * as H from '../utils/helpers';
-import { auth } from '../services/db';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 
 interface LoginProps {
-  users: any[];
-  onLogin: (u: any) => void;
+  users: User[];
+  onLogin: (u: User) => void;
   schoolName: string;
   settings?: { secretKey?: string, secretCount?: number, adminPassword?: string, language?: 'ru' | 'en' };
 }
 
-export default function Login({ schoolName, settings }: LoginProps) {
+export default function Login({ users, onLogin, schoolName, settings }: LoginProps) {
+  // role state can now include 'employee' explicitly
   const [role, setRole] = useState<Role>('student');
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
 
+  // Secret Admin Logic
   const [spaceCount, setSpaceCount] = useState(0);
   const [iconTapCount, setIconTapCount] = useState(0);
   const [showAdminModal, setShowAdminModal] = useState(false);
@@ -35,28 +34,34 @@ export default function Login({ schoolName, settings }: LoginProps) {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Secret Key Logic
       if (e.code === secretKey) {
         setSpaceCount(prev => {
            const next = prev + 1;
            if (next >= secretTriggerCount) {
-              e.preventDefault();
+              e.preventDefault(); // Prevent scrolling or typing the trigger key
               setShowAdminModal(true);
               return 0;
            }
            return next;
         });
+        // Reset count after 1s if not pressed quickly
         setTimeout(() => setSpaceCount(0), 1000);
       }
+
+      // Global Enter Key Logic for Login
       if (e.key === 'Enter' && !showAdminModal) {
+          // If a modal isn't open, try to login
           handleAuth();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [secretKey, secretTriggerCount, showAdminModal, login, password, role]);
+  }, [secretKey, secretTriggerCount, showAdminModal, login, password, role]); // Depend on login inputs for closure capture
 
   const handleIconTap = () => {
-    if (window.innerWidth > 1024) return;
+    if (window.innerWidth > 1024) return; // Only allow on mobile/tablet
+    
     setIconTapCount(prev => {
       const next = prev + 1;
       if (next >= secretTriggerCount) {
@@ -65,54 +70,70 @@ export default function Login({ schoolName, settings }: LoginProps) {
       }
       return next;
     });
+    // Reset count after 1s if not pressed quickly
     setTimeout(() => setIconTapCount(0), 1000);
   };
 
-  const handleAuth = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!login && !password) return;
+  const handleAuth = (e?: React.FormEvent) => {
+    if (e) e.preventDefault(); // Prevent form submission refresh
+    
+    if (!login && !password) return; // Don't trigger on empty enter
 
-    setLoading(true);
-    setError('');
-    
-    // We construct the email from the login name
-    const email = `${login.toLowerCase().trim()}@elzhur.app`;
-    
-    try {
-        await signInWithEmailAndPassword(auth, email, password);
-        // Successful login: App.tsx will detect the state change and render the dashboard.
-    } catch (err: any) {
-        // Special case: Initial bootstrapping of the creator
-        if (login.toLowerCase() === 'creator' && password === realAdminPass) {
-            try {
-                await createUserWithEmailAndPassword(auth, email, password);
-            } catch (createErr: any) {
-                setError('First setup error: ' + createErr.message);
-                setLoading(false);
-            }
-        } else {
-            setError(t('invalid_login'));
-            setLoading(false);
+    // Filter users by credentials and specific role logic
+    const user = users.find(u => {
+        if (u.login !== login || u.password !== password) return false;
+        
+        if (role === 'employee') {
+            // Updated logic: Check explicitly for role 'employee'
+            // Backward compatibility: also check teacher with customRole if role is not strictly employee yet
+            return u.role === 'employee' || (u.role === 'teacher' && !!u.customRole);
         }
+        
+        // Strict role matching for others
+        return u.role === role;
+    });
+
+    if (user) {
+      if (user.blockedUntil) {
+          const blockDate = new Date(user.blockedUntil);
+          if (blockDate > new Date()) {
+              setError(`${t('account_blocked')} ${blockDate.toLocaleString()}`);
+              return;
+          }
+      }
+      setError('');
+      onLogin(user);
+    } else {
+      setError(t('invalid_login'));
     }
   };
 
-  const handleCreatorAuth = async () => {
-    if (adminPass === realAdminPass) {
-        const email = `creator@elzhur.app`;
-        setLoading(true);
-        try {
-            await signInWithEmailAndPassword(auth, email, adminPass);
-        } catch (err: any) {
-            try {
-                await createUserWithEmailAndPassword(auth, email, adminPass);
-            } catch (e: any) {
-                alert('Bootstrapping error ' + e.message);
-                setLoading(false);
-            }
-        }
+  const handleCreatorAuth = () => {
+    const creator = users.find(u => u.role === 'creator');
+    if (creator && adminPass === realAdminPass) {
+        onLogin(creator);
+        setShowAdminModal(false);
+        setAdminPass('');
     } else {
         alert(t('invalid_login'));
+    }
+  };
+
+  const fillTest = () => {
+    // Find a user matching the selected role criteria
+    const u = users.find(u => {
+        if (role === 'employee') return u.role === 'employee' || (u.role === 'teacher' && !!u.customRole);
+        if (role === 'teacher') return u.role === 'teacher' && !u.customRole;
+        if (role === 'student') return u.role === 'student';
+        return u.role === role;
+    });
+
+    if (u) {
+      setLogin(u.login);
+      setPassword(u.password || '');
+      setError('');
+    } else {
+      setError(t('no_test_data'));
     }
   };
 
@@ -132,20 +153,28 @@ export default function Login({ schoolName, settings }: LoginProps) {
 
         <form onSubmit={handleAuth} className="space-y-6">
           <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-2 dark:text-slate-300">{t('role')}</label>
+            <Select value={role} onChange={(e) => setRole(e.target.value as any)} className="h-12 text-base">
+              <option value="student">{t('student')}</option>
+              <option value="teacher">{t('teacher')}</option>
+              <option value="director">{t('director')}</option>
+              <option value="employee">{t('employee')}</option>
+            </Select>
+          </div>
+          <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2 dark:text-slate-300">{t('login')}</label>
-            <Input disabled={loading} value={login} onChange={(e) => setLogin(e.target.value)} placeholder={t('enter_login')} className="h-12" />
+            <Input value={login} onChange={(e) => setLogin(e.target.value)} placeholder={t('enter_login')} className="h-12" />
           </div>
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2 dark:text-slate-300">{t('password')}</label>
-            <Input disabled={loading} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t('enter_pass')} className="h-12" />
+            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t('enter_pass')} className="h-12" />
           </div>
           
           {error && <div className="text-red-600 text-sm bg-red-50 p-3 rounded-lg border border-red-100 dark:bg-red-900/30 dark:border-red-800 dark:text-red-300">{error}</div>}
           
-          <div className="pt-6">
-             <Button disabled={loading} type="submit" variant="primary" className="w-full h-12 text-base shadow-blue-500/30">
-                 {loading ? t('loading') : t('enter')}
-             </Button>
+          <div className="pt-6 flex flex-col sm:flex-row gap-4">
+             <Button type="submit" variant="primary" className="flex-1 h-12 text-base shadow-blue-500/30">{t('enter')}</Button>
+             <Button type="button" variant="ghost" className="flex-1 h-12" onClick={fillTest}>{t('test_data')}</Button>
           </div>
         </form>
       </Card>
@@ -157,7 +186,6 @@ export default function Login({ schoolName, settings }: LoginProps) {
                 <form onSubmit={(e) => { e.preventDefault(); handleCreatorAuth(); }}>
                     <Input 
                       autoFocus
-                      disabled={loading}
                       type={showAdminPass ? 'text' : 'password'} 
                       value={adminPass} 
                       onChange={e => setAdminPass(e.target.value)} 
@@ -175,7 +203,7 @@ export default function Login({ schoolName, settings }: LoginProps) {
                         {showAdminPass ? <EyeOff size={20} /> : <Eye size={20} />}
                     </button>
                     <div className="mt-4">
-                        <Button disabled={loading} type="submit" variant="primary" className="w-full">{loading ? t('loading') : t('enter')}</Button>
+                        <Button type="submit" variant="primary" className="w-full">{t('enter')}</Button>
                     </div>
                 </form>
             </div>

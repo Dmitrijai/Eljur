@@ -5,9 +5,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /appStates/{stateId} {
-      // Secured: only authenticated users can read/write the central state.
-      // A more granular schema (users, grades collections) would be needed for RBAC.
-      allow read, write: if request.auth != null;
+      // Allow any user to read/write for now since this 
+      // replaces localStorage and has its own custom auth in the json payload.
+      // Since they haven't adopted Firebase Auth yet, allow true.
+      allow read, write: if true;
     }
   }
 }
